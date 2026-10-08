@@ -11,7 +11,9 @@ export function getDatabase(): PrismaClient {
   if (!connectionString) throw new Error("Подключение к базе данных не настроено");
   // PrismaPg timestamp encoding requires a UTC session. Salon wall-clock
   // conversion is handled separately by salon-time.ts, never by this session.
-  const adapter = new PrismaPg({ connectionString, options: "-c timezone=UTC", max: 5, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
+  const schema = new URL(connectionString).searchParams.get("schema") ?? "public";
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/.test(schema)) throw new Error("Некорректная схема базы данных");
+  const adapter = new PrismaPg({ connectionString, options: "-c timezone=UTC -c search_path=" + schema + ",public", max: 5, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 }, { schema });
   const database = new PrismaClient({ adapter });
   databaseGlobal.romeoPrisma = database;
   return database;

@@ -1,0 +1,23 @@
+# Template only: verify user, directories and node executable before installing.
+[Unit]
+Description=Romeo booking application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=romeo
+Group=romeo
+WorkingDirectory=/srv/romeo
+EnvironmentFile=/etc/romeo/romeo.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /srv/romeo/node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3000
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

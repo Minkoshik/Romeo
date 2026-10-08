@@ -10,6 +10,7 @@ export const salonSchema = z.object({
       bookingHorizonDays: z.coerce.number().int().min(1).max(365), minimumLeadMinutes: z.coerce.number().int().min(0).max(10080),
       slotStepMinutes: z.coerce.number().int().min(5).max(60), holdDurationMinutes: z.coerce.number().int().min(1).max(60), bufferMinutes: z.coerce.number().int().min(0).max(120),
       prepaymentMode: z.enum(["DISABLED", "FIXED", "PERCENTAGE"]), prepaymentFixedMinor: z.coerce.number().int().nonnegative().max(100000000), prepaymentPercentage: z.coerce.number().min(0).max(100),
+      cancellationLeadMinutes: z.number().int().nonnegative().optional(), rescheduleLeadMinutes: z.number().int().nonnegative().optional(),
       bookingTerms: z.string().min(1).max(20000), privacyTerms: z.string().min(1).max(20000),
     }),
     currency: z.string().length(3).refine(value => { try { new Intl.NumberFormat("ru-RU", { style: "currency", currency: value }); return true; } catch { return false; } }, "Некорректная валюта салона"),

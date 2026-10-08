@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowRight, Check, ChevronDown, Clock3, Plus, Search, Scissors, Sparkles, X } from "lucide-react";
 import { useBooking } from "./booking-provider";
 import { CatalogState, EmptyCatalog } from "./catalog-state";
@@ -16,6 +17,7 @@ function ServiceCard({ service }: { service: Service }) {
   const variant = choice?.variant ?? service.variants.find(item => item.id === variantId) ?? service.variants[0];
   const [expanded, setExpanded] = useState(false);
   return <article className={`service-card ${choice ? "is-selected" : ""}`}>
+    {service.imageUrl&&<Image className="service-photo" src={service.imageUrl} alt={service.name} width={120} height={90} unoptimized/>}
     <div className="service-main"><div className="service-copy"><div className="service-title"><h4>{service.name}</h4>{service.popular && <span className="popular-tag"><Sparkles size={10}/>Популярное</span>}</div><p>{service.description}</p><div className="service-meta"><span><Clock3 size={12}/>{duration(variant.durationMinutes)}</span><button className="details-button" aria-expanded={expanded} aria-controls={`details-${service.id}`} onClick={() => setExpanded(value => !value)}>Подробнее<ChevronDown size={12} className={expanded ? "rotated" : ""}/></button></div></div><div className="service-action"><strong>{money(variant.priceMinor, salon.currency)}</strong><button className={`select-service ${choice ? "selected" : ""}`} aria-label={`${choice ? "Убрать" : "Выбрать"}: ${service.name}`} aria-pressed={Boolean(choice)} onClick={() => toggle(variant.id)}>{choice ? <Check size={18}/> : <Plus size={18}/>}</button></div></div>
     {service.variants.length > 1 && <div className="variant-control"><label htmlFor={`variant-${service.id}`}>Вариант услуги</label><select id={`variant-${service.id}`} value={variant.id} onChange={event => { setVariantId(event.target.value); if (choice) toggle(event.target.value); }}>{service.variants.map(item => <option key={item.id} value={item.id}>{item.name} · {money(item.priceMinor, salon.currency)} · {duration(item.durationMinutes)}</option>)}</select></div>}
     {expanded && <p className="service-details" id={`details-${service.id}`}>{service.details}</p>}

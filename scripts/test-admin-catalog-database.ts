@@ -7,7 +7,9 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Client } from "pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { demoId, seedDemoCatalog, SeedConfigurationError } from "../prisma/seed";
-import { AdminError, loginAdmin, provisionFirstAdmin } from "../src/lib/admin-auth";
+import { AdminError, getAdminSession, loginAdmin, logoutAdmin, provisionFirstAdmin, hashAdminSessionToken } from "../src/lib/admin-auth";
+import { getAdminAppointments, mutateAdminAppointment } from "../src/lib/admin-booking-repository";
+import { getAdminManagement, mutateAdminManagement } from "../src/lib/admin-management-repository";
 import { getAdminCatalog, getAdminSchedule, mutateAdminCatalog, mutateAdminSchedule } from "../src/lib/admin-catalog-repository";
 import { createAppointment, getAppointment } from "../src/lib/appointment-repository";
 import { loadDatabaseCatalog } from "../src/lib/catalog-repository";
@@ -228,7 +230,87 @@ async function main() {
       assert.ok(mutations.length > 10);
       assert.ok(mutations.every(row => /^[a-f0-9]{64}$/.test(row.payloadFingerprint)));
     });
-    console.info(`Проверено групп административного каталога и расписания: ${checks}.`);
+    await database.salonSettings.update({where:{id:"salon"},data:{isDemo:true}});
+    const manualInput = (time="10:00") => ({action:"create",idempotencyKey:randomUUID(),variantIds:[menId],masterId:alexId,date,time,contacts:{name:"QA ручной клиент",phone:"+79165000001",email:"ops@example.invalid",comment:"QA"},consent:true});
+    const mutate = (input:Record<string,unknown>) => mutateAdminAppointment(token,{idempotencyKey:randomUUID(),...input},{database});
+    await check("Ручная запись идемпотентна, рассчитывает серверную цену и создаёт аудит",async()=>{
+      const input=manualInput();
+      const results=await Promise.all(Array.from({length:3},()=>mutateAdminAppointment(token,input,{database})));
+      const row=results[0].appointment;assert.equal(new Set(results.map(r=>r.appointment.id)).size,1);assert.equal(row.source,"ADMIN");assert.equal(row.totalPriceMinor,220000);
+      assert.equal(await database.auditLog.count({where:{entityId:row.id,action:"APPOINTMENT_CREATE"}}),1);
+      await assert.rejects(()=>mutate({...input,time:"12:00"}),rejects(409));
+      await assert.rejects(()=>mutate({...manualInput("12:00"),priceMinor:1}),rejects(400));
+      await clearAppointments();
+    });
+    await check("Гонка клиентской и ручной записи допускает только один визит",async()=>{
+      const results=await Promise.allSettled([book(),mutate(manualInput())]);assert.equal(results.filter(r=>r.status==="fulfilled").length,1);
+      assert.equal(await database.appointment.count({where:{status:"CONFIRMED"}}),1);await clearAppointments();
+    });
+    await check("Перенос сохраняет стоимость, предоплату и снимки; конфликт и устаревшие данные отклоняются",async()=>{
+      await schedule({op:"weekly",masterId:markId,intervals:weeklyAllDays});
+      const created=(await mutate(manualInput())).appointment;
+      await mutate(manualInput("12:00"));
+      await assert.rejects(()=>mutate({action:"reschedule",id:created.id,expectedUpdatedAt:created.updatedAt,masterId:alexId,date,time:"12:00",reason:"QA конфликт"}),rejects(409));
+      const moved=await mutate({action:"reschedule",id:created.id,expectedUpdatedAt:created.updatedAt,masterId:markId,date,time:"15:00",reason:"QA перенос"});
+      assert.equal(moved.appointment.totalPriceMinor,created.totalPriceMinor);assert.deepEqual(moved.appointment.items,created.items);assert.equal(moved.priceDifferenceMinor,0);
+      await assert.rejects(()=>mutate({action:"notes",id:created.id,expectedUpdatedAt:created.updatedAt,adminNotes:"Устарело"}),rejects(409));
+      await assert.rejects(()=>mutate({action:"status",id:created.id,expectedUpdatedAt:moved.appointment.updatedAt,status:"COMPLETED"}),rejects(409));
+      await clearAppointments();
+    });
+    await check("Подтверждение без предоплаты требует причину; отмена сохраняет успешный платёж без фиктивного возврата",async()=>{
+      await database.salonSettings.update({where:{id:"salon"},data:{prepaymentMode:"PERCENTAGE",prepaymentPercentageBps:2500}});
+      await assert.rejects(()=>mutate({...manualInput(),confirmWithoutPayment:true}),rejects(400));
+      const created=(await mutate({...manualInput(),confirmWithoutPayment:true,reason:"Оплата в салоне"})).appointment;
+      assert.equal(created.status,"CONFIRMED");assert.equal(created.paidMinor,0);assert.equal(created.prepaymentRequiredMinor,55000);
+      const payment=await database.payment.create({data:{appointmentId:created.id,provider:"QA_TEST",mode:"TEST",idempotencyKey:randomUUID(),status:"SUCCEEDED",amountMinor:55000,currency:"RUB",paidAt:new Date()}});
+      const cancelled=(await mutate({action:"cancel",id:created.id,expectedUpdatedAt:created.updatedAt,reason:"QA отмена"})).appointment;assert.equal(cancelled.status,"CANCELLED");assert.equal(cancelled.paidMinor,55000);
+      const stored=await database.payment.findUniqueOrThrow({where:{id:payment.id}});assert.equal(stored.status,"SUCCEEDED");assert.equal(stored.refundedAmountMinor,0);assert.equal(stored.needsAttention,true);
+      await mutateAdminManagement(token,{action:"paymentReview",idempotencyKey:randomUUID(),id:stored.id,expectedUpdatedAt:stored.updatedAt.toISOString(),note:"Проверить возврат после подключения провайдера"},{database});
+      assert.equal((await database.payment.findUniqueOrThrow({where:{id:payment.id}})).status,"SUCCEEDED");
+      const list=await getAdminManagement(token,"payments",{needsAttention:true},{database});assert.ok(list.payments?.some(p=>p.id===payment.id));
+      await clearAppointments();await database.salonSettings.update({where:{id:"salon"},data:{prepaymentMode:"DISABLED",prepaymentPercentageBps:null}});
+    });
+    await check("Завершение и неявка доступны после визита, заметки клиентов приватны",async()=>{
+      for(const status of ["COMPLETED","NO_SHOW"]){
+        const created=(await mutate(manualInput())).appointment;
+        const past=new Date(Date.now()-86400000);const ends=new Date(past.getTime()+3600000);const until=new Date(ends.getTime()+900000);
+        const row=await database.appointment.update({where:{id:created.id},data:{startsAt:past,endsAt:ends,occupiedUntil:until}});
+        assert.equal((await mutate({action:"status",id:row.id,expectedUpdatedAt:row.updatedAt.toISOString(),status})).appointment.status,status);
+      }
+      const customer=await database.customer.findUniqueOrThrow({where:{phoneNormalized:"+79165000001"}});
+      await mutateAdminManagement(token,{action:"customerNotes",idempotencyKey:randomUUID(),id:customer.id,expectedUpdatedAt:customer.updatedAt.toISOString(),adminNotes:"QA только администраторам"},{database});
+      const view=await getAdminManagement(token,"customers",{id:customer.id},{database});assert.equal(view.history?.length,2);assert.equal(view.customers?.[0].adminNotes,"QA только администраторам");
+      const publicCatalog=JSON.stringify(await loadDatabaseCatalog(database));assert.equal(publicCatalog.includes("QA только администраторам"),false);
+      await clearAppointments();
+    });
+    await check("Настройки владельца отражаются публично; чужая роль и устаревшая версия отклоняются",async()=>{
+      const current=await getAdminManagement(token,"settings",{},{database});const {updatedAt,isDemo,...data}=current.settings!;assert.equal(isDemo,true);
+      const input={action:"settings",idempotencyKey:randomUUID(),expectedUpdatedAt:updatedAt,data:{...data,name:"QA обновлённый салон",logoUrl:"/icon.svg",slotStepMinutes:15,prepaymentMode:"FIXED",prepaymentFixedMinor:40000}};
+      const other=(await loginAdmin({email:"qa-other@example.invalid",password},{database})).token;
+      await assert.rejects(()=>mutateAdminManagement(other,input,{database}),rejects(403));
+      const saved=await mutateAdminManagement(token,input,{database});assert.equal(saved.settings?.name,"QA обновлённый салон");
+      const publicCatalog=await loadDatabaseCatalog(database);assert.equal(publicCatalog.salon?.name,"QA обновлённый салон");assert.equal(publicCatalog.salon?.logoUrl,"/icon.svg");assert.equal(publicCatalog.salon?.policy.slotStepMinutes,15);
+      await assert.rejects(()=>mutateAdminManagement(token,{...input,idempotencyKey:randomUUID()},{database}),rejects(409));
+      await database.salonSettings.update({where:{id:"salon"},data:{prepaymentMode:"DISABLED",prepaymentFixedMinor:null}});
+      const created=(await mutate(manualInput())).appointment;
+      const current2=await getAdminManagement(token,"settings",{},{database});const {updatedAt:version,isDemo:demo,...data2}=current2.settings!;assert.equal(demo,true);
+      await assert.rejects(()=>mutateAdminManagement(token,{action:"settings",idempotencyKey:randomUUID(),expectedUpdatedAt:version,data:{...data2,timezone:"Europe/London"}},{database}),rejects(409));
+      assert.equal((await getAdminAppointments(token,{from:date,to:date},{database})).appointments[0].id,created.id);
+      const overview=await getAdminManagement(token,"overview",{},{database});assert.ok(overview.next?.some(a=>a.id===created.id));
+      const audit=JSON.stringify(await getAdminManagement(token,"audit",{},{database}));for(const secret of [password,token,"passwordHash","tokenHash","publicAccessTokenHash"])assert.equal(audit.includes(secret),false);
+      await clearAppointments();
+    });
+    await check("Первый владелец не заменяется; лимит входа, отзыв и срок сессии проверяются сервером",async()=>{
+      assert.equal((await provisionFirstAdmin({...credentials,name:"Другое имя"},{database})).created,false);
+      for(let i=0;i<5;i++)await assert.rejects(()=>loginAdmin({email:"missing@example.invalid",password},{database}),rejects(401));
+      await assert.rejects(()=>loginAdmin({email:"missing@example.invalid",password},{database}),rejects(429));
+      const temporary=(await loginAdmin(credentials,{database})).token;assert.equal((await getAdminSession(temporary,{database})).role,"OWNER");
+      await logoutAdmin(temporary,{database});await assert.rejects(()=>getAdminSession(temporary,{database}),rejects(401));
+      const expired=(await loginAdmin(credentials,{database})).token;await database.adminSession.update({where:{tokenHash:hashAdminSessionToken(expired)},data:{createdAt:new Date(Date.now()-10000),expiresAt:new Date(Date.now()-1000)}});await assert.rejects(()=>getAdminSession(expired,{database}),rejects(401));
+      const owner=await database.adminUser.findUniqueOrThrow({where:{emailNormalized:credentials.email}});await database.adminUser.update({where:{id:owner.id},data:{sessionVersion:{increment:1}}});
+      await assert.rejects(()=>getAdminManagement(token,"settings",{},{database}),rejects(401));
+    });
+    console.info(`Проверено групп административной панели: ${checks}.`);
   } finally {
     await database.$disconnect();
     try { if (created && safeSchema.test(schemaName)) await sql.query('DROP SCHEMA "' + schemaName + '" CASCADE'); }

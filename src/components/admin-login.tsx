@@ -27,7 +27,7 @@ export function AdminLogin() {
       {error && <p role="alert" className="admin-error">{error}</p>}
       <button className="primary-button full-width" disabled={pending}>{pending ? "Проверяем…" : "Войти"}</button>
     </form>
-    <details><summary>Первый вход</summary><p>Создайте первого администратора командой <code>npm run admin:create</code> в папке проекта. Email, имя и пароль вводятся локально; общего пароля нет.</p></details>
+    <details><summary>Первый вход</summary><p>В интерактивном терминале в папке проекта выполните <code>npm run admin:create -- --email owner@example.com --name &quot;Владелец&quot;</code>, указав свои email и имя. Пароль вводится скрыто; общего пароля нет.</p></details>
     <Link href="/" className="admin-back">Вернуться на сайт</Link>
   </div>;
 }

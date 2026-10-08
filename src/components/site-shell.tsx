@@ -2,7 +2,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, ArrowUpRight, Clock3, MapPin, Phone, Scissors, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Clock3, Mail, MapPin, Phone, Scissors, ShieldCheck } from "lucide-react";
 import { useBooking } from "./booking-provider";
 import type { ReactNode } from "react";
 
@@ -24,7 +24,7 @@ export function SkipLink() {
 
 export function Brand({ small = false }: { small?: boolean }) {
   const { salon } = useBooking();
-  return <span className={`brand ${small ? "brand-small" : ""}`}><Scissors aria-hidden="true"/><span>{salon.name}<span className="brand-sub">САЛОН & БАРБЕРШОП</span></span></span>;
+  return <span className={`brand ${small ? "brand-small" : ""}`}>{salon.logoUrl?<Image src={salon.logoUrl} alt="" width={36} height={36} unoptimized/>:<Scissors aria-hidden="true"/>}<span>{salon.name}<span className="brand-sub">САЛОН & БАРБЕРШОП</span></span></span>;
 }
 export function SiteHeader() {
   const pathname = usePathname();
@@ -46,6 +46,6 @@ export function SiteFooter() {
 }
 export function AboutContent() {
   const { salon } = useBooking();
-  return <><div className="page-heading"><div className="eyebrow">ПРИЯТНО ПОЗНАКОМИТЬСЯ</div><h2>Ваше место. Ваш стиль.</h2><p>Хорошая стрижка начинается с того, что вас услышали.</p></div><section className="content-card about-intro"><Scissors className="intro-icon" size={25}/><h3>Немного времени для себя</h3><p>В {salon.name} мы любим естественные образы, внимание к деталям и неспешные разговоры. Здесь можно обновить привычный стиль или попробовать что-то новое.</p><span className="soft-note">Название, описание и контакты — демонстрационные.</span></section><section className="content-card contact-card"><h3>Будем рады видеть вас</h3><div><MapPin size={19}/><span><b>Адрес</b>{salon.address}</span></div><div><Clock3 size={19}/><span><b>Расписание</b>Выберите мастера, чтобы увидеть свободные даты и время.<small>Часовой пояс: {salon.timezone}</small></span></div><div><Phone size={19}/><span><b>Телефон · демо</b>{salon.phone}</span></div></section><Link className="primary-button full-width" href="/">Посмотреть услуги <ArrowUpRight size={17}/></Link></>;
+  return <><div className="page-heading"><div className="eyebrow">ПРИЯТНО ПОЗНАКОМИТЬСЯ</div><h2>Ваше место. Ваш стиль.</h2><p>Хорошая стрижка начинается с того, что вас услышали.</p></div><section className="content-card about-intro"><Scissors className="intro-icon" size={25}/><h3>Немного времени для себя</h3><p>В {salon.name} мы любим естественные образы, внимание к деталям и неспешные разговоры. Здесь можно обновить привычный стиль или попробовать что-то новое.</p><span className="soft-note">Название, описание и контакты — демонстрационные.</span></section><section className="content-card contact-card"><h3>Будем рады видеть вас</h3><div><MapPin size={19}/><span><b>Адрес</b>{salon.address}</span></div><div><Clock3 size={19}/><span><b>Расписание</b>Выберите мастера, чтобы увидеть свободные даты и время.<small>Часовой пояс: {salon.timezone}</small></span></div><div><Phone size={19}/><span><b>Телефон · демо</b>{salon.phone}</span></div>{salon.email&&<div><Mail size={19}/><span><b>Email</b><a href={`mailto:${salon.email}`}>{salon.email}</a></span></div>}</section><Link className="primary-button full-width" href="/">Посмотреть услуги <ArrowUpRight size={17}/></Link></>;
 }
 

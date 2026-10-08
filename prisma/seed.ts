@@ -21,7 +21,7 @@ export function demoId(entity: string, slug: string): string {
 }
 
 export async function seedDemoCatalog(prisma: PrismaClient, salon: Salon = getSalon()) {
-  if (process.env.NODE_ENV === "production") {
+  if (process.env.NODE_ENV === "production" || process.env.APP_ENV === "production") {
     throw new SeedConfigurationError("Демонстрационное заполнение запрещено в production.");
   }
   if (salon.currency !== "RUB") {
@@ -147,7 +147,9 @@ export async function seedDemoCatalog(prisma: PrismaClient, salon: Salon = getSa
 async function main() {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new SeedConfigurationError("Для заполнения базы задайте DATABASE_URL.");
-  const adapter = new PrismaPg({ connectionString, options: "-c timezone=UTC", max: 3, connectionTimeoutMillis: 5_000 });
+  const schema = new URL(connectionString).searchParams.get("schema") ?? "public";
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/.test(schema)) throw new SeedConfigurationError("Некорректная схема базы данных.");
+  const adapter = new PrismaPg({ connectionString, options: "-c timezone=UTC -c search_path=" + schema + ",public", max: 3, connectionTimeoutMillis: 5_000 }, { schema });
   const prisma = new PrismaClient({ adapter });
   try {
     const result = await seedDemoCatalog(prisma);
