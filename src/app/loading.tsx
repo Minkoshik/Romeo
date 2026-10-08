@@ -1,0 +1,1 @@
+export default function Loading() { return <div className="loading-list" role="status"><p>Загружаем страницу…</p>{[1,2,3].map(item => <div className="skeleton" key={item}><span/><span/></div>)}</div>; }

@@ -1,0 +1,448 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PrepaymentMode {
+  DISABLED
+  FIXED
+  PERCENTAGE
+}
+
+enum AppointmentStatus {
+  WAITING_PAYMENT
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  EXPIRED
+}
+
+enum AppointmentSource {
+  CLIENT
+  ADMIN
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  EXPIRED
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+enum PaymentMode {
+  TEST
+  LIVE
+}
+
+enum AdminRole {
+  OWNER
+  ADMIN
+}
+
+enum ScheduleExceptionKind {
+  CLOSED_DAY
+  REPLACE_DAY
+  BLOCKS_ONLY
+}
+
+enum ScheduleIntervalKind {
+  WORKING
+  BLOCKED
+}
+
+// Single salon. All money is stored in the currency's smallest unit (RUB: kopecks).
+model SalonSettings {
+  id                        String         @id @default("salon")
+  name                      String
+  address                   String
+  phone                     String
+  email                     String?
+  logoUrl                   String?
+  currency                  String         @default("RUB") @db.Char(3)
+  timezone                  String         @default("Europe/Moscow") @db.VarChar(64)
+  phoneCountry              String         @default("RU") @db.Char(2)
+  bookingHorizonDays        Int            @default(60)
+  minimumLeadMinutes        Int            @default(120)
+  slotStepMinutes           Int            @default(30)
+  holdDurationMinutes       Int            @default(10)
+  bufferMinutes             Int            @default(15)
+  prepaymentMode            PrepaymentMode @default(DISABLED)
+  prepaymentFixedMinor      Int?
+  prepaymentPercentageBps   Int?
+  allowCustomerCancellation Boolean        @default(false)
+  allowCustomerReschedule   Boolean        @default(false)
+  cancellationLeadMinutes   Int            @default(1440)
+  rescheduleLeadMinutes     Int            @default(1440)
+  bookingTerms              String
+  privacyTerms              String
+  isDemo                    Boolean        @default(false)
+  createdAt                 DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt                 DateTime       @updatedAt @db.Timestamptz(3)
+}
+
+model ServiceCategory {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug        String    @unique
+  name        String
+  description String?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  isDemo      Boolean   @default(false)
+  archivedAt  DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+  services    Service[]
+
+  @@index([isActive, archivedAt, sortOrder])
+}
+
+model Service {
+  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  categoryId          String           @db.Uuid
+  slug                String           @unique
+  name                String
+  shortDescription    String
+  detailedDescription String?
+  imageUrl            String?
+  sortOrder           Int              @default(0)
+  isFeatured          Boolean          @default(false)
+  isActive            Boolean          @default(true)
+  isDemo              Boolean          @default(false)
+  archivedAt          DateTime?        @db.Timestamptz(3)
+  createdAt           DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime         @updatedAt @db.Timestamptz(3)
+  category            ServiceCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  variants            ServiceVariant[]
+
+  @@index([categoryId, isActive, archivedAt, sortOrder])
+}
+
+// A service with one price still has a single "Основной" variant.
+model ServiceVariant {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceId        String            @db.Uuid
+  slug             String
+  name             String
+  priceMinor       Int
+  durationMinutes  Int
+  bufferMinutes    Int               @default(0)
+  sortOrder        Int               @default(0)
+  isActive         Boolean           @default(true)
+  archivedAt       DateTime?         @db.Timestamptz(3)
+  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
+  service          Service           @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  masterServices   MasterService[]
+  appointmentItems AppointmentItem[]
+
+  @@unique([serviceId, slug])
+  @@index([serviceId, isActive, archivedAt, sortOrder])
+}
+
+model Master {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug               String              @unique
+  name               String
+  specialization     String
+  description        String
+  photoUrl           String?
+  sortOrder          Int                 @default(0)
+  isBookable         Boolean             @default(true)
+  isDemo             Boolean             @default(false)
+  archivedAt         DateTime?           @db.Timestamptz(3)
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @db.Timestamptz(3)
+  services           MasterService[]
+  weeklySchedules    WeeklySchedule[]
+  scheduleExceptions ScheduleException[]
+  appointments       Appointment[]
+
+  @@index([isBookable, archivedAt, sortOrder])
+}
+
+model MasterService {
+  id                      String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  masterId                String         @db.Uuid
+  serviceVariantId        String         @db.Uuid
+  priceMinorOverride      Int?
+  durationMinutesOverride Int?
+  bufferMinutesOverride   Int?
+  isActive                Boolean        @default(true)
+  archivedAt              DateTime?      @db.Timestamptz(3)
+  createdAt               DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime       @updatedAt @db.Timestamptz(3)
+  master                  Master         @relation(fields: [masterId], references: [id], onDelete: Restrict)
+  serviceVariant          ServiceVariant @relation(fields: [serviceVariantId], references: [id], onDelete: Restrict)
+
+  @@unique([masterId, serviceVariantId])
+  @@index([serviceVariantId, isActive])
+}
+
+// Local wall-clock minutes, not instants. Sunday=0, Monday=1, ..., Saturday=6.
+// Split working hours into multiple rows to represent lunch and other breaks.
+model WeeklySchedule {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  masterId    String   @db.Uuid
+  dayOfWeek   Int
+  startMinute Int
+  endMinute   Int
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  master      Master   @relation(fields: [masterId], references: [id], onDelete: Restrict)
+
+  @@unique([masterId, dayOfWeek, startMinute])
+}
+
+// localDate is a calendar date in the salon's timezone, never a UTC workday.
+// CLOSED_DAY ignores weekly hours; REPLACE_DAY replaces them entirely;
+// BLOCKS_ONLY subtracts blocked intervals from the weekly hours.
+model ScheduleException {
+  id        String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  masterId  String                      @db.Uuid
+  localDate DateTime                    @db.Date
+  kind      ScheduleExceptionKind
+  reason    String?
+  createdAt DateTime                    @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime                    @updatedAt @db.Timestamptz(3)
+  master    Master                      @relation(fields: [masterId], references: [id], onDelete: Restrict)
+  intervals ScheduleExceptionInterval[]
+
+  @@unique([masterId, localDate])
+  @@index([localDate])
+}
+
+model ScheduleExceptionInterval {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scheduleExceptionId String               @db.Uuid
+  kind                ScheduleIntervalKind
+  startMinute         Int
+  endMinute           Int
+  scheduleException   ScheduleException    @relation(fields: [scheduleExceptionId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleExceptionId, kind, startMinute])
+}
+
+model Customer {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String
+  phoneNormalized String        @unique @db.VarChar(32)
+  email           String?
+  adminNotes      String?
+  archivedAt      DateTime?     @db.Timestamptz(3)
+  createdAt       DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @db.Timestamptz(3)
+  appointments    Appointment[]
+
+  @@index([name])
+}
+
+model Appointment {
+  id                              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  number                          Int               @unique @default(autoincrement())
+  customerId                      String            @db.Uuid
+  masterId                        String            @db.Uuid
+  createdByAdminId                String?           @db.Uuid
+  source                          AppointmentSource @default(CLIENT)
+  status                          AppointmentStatus @default(WAITING_PAYMENT)
+  startsAt                        DateTime          @db.Timestamptz(3)
+  endsAt                          DateTime          @db.Timestamptz(3)
+  occupiedUntil                   DateTime          @db.Timestamptz(3)
+  holdExpiresAt                   DateTime?         @db.Timestamptz(3)
+  confirmedAt                     DateTime?         @db.Timestamptz(3)
+  cancelledAt                     DateTime?         @db.Timestamptz(3)
+  cancellationReason              String?
+  customerComment                 String?
+  adminNotes                      String?
+  idempotencyKey                  String            @unique @db.VarChar(128)
+  publicAccessTokenHash           String            @unique @db.VarChar(128)
+  requestFingerprint              String            @default("") @db.VarChar(64)
+  salonNameSnapshot               String
+  salonAddressSnapshot            String
+  salonPhoneSnapshot              String            @default("")
+  phoneCountrySnapshot            String            @default("RU") @db.Char(2)
+  masterNameSnapshot              String
+  customerNameSnapshot            String
+  customerPhoneSnapshot           String            @db.VarChar(32)
+  customerEmailSnapshot           String?
+  timezoneSnapshot                String            @db.VarChar(64)
+  currency                        String            @db.Char(3)
+  totalPriceMinor                 Int
+  totalDurationMinutes            Int
+  totalBufferMinutes              Int               @default(0)
+  prepaymentModeSnapshot          PrepaymentMode
+  prepaymentRequiredMinor         Int
+  prepaymentFixedMinorSnapshot    Int?
+  prepaymentPercentageBpsSnapshot Int?
+  bookingTermsVersion             String
+  privacyTermsVersion             String
+  bookingTermsSnapshot            String            @default("")
+  privacyTermsSnapshot            String            @default("")
+  consentRecordedAt               DateTime          @db.Timestamptz(3)
+  createdAt                       DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt                       DateTime          @updatedAt @db.Timestamptz(3)
+  customer                        Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  master                          Master            @relation(fields: [masterId], references: [id], onDelete: Restrict)
+  createdByAdmin                  AdminUser?        @relation(fields: [createdByAdminId], references: [id], onDelete: SetNull)
+  items                           AppointmentItem[]
+  payments                        Payment[]
+
+  @@index([masterId, startsAt, status])
+  @@index([customerId, startsAt])
+  @@index([status, holdExpiresAt])
+  @@index([startsAt, status])
+}
+
+// Snapshots remain unchanged when catalogue prices and names change.
+model AppointmentItem {
+  id                      String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId           String         @db.Uuid
+  serviceVariantId        String         @db.Uuid
+  position                Int
+  serviceNameSnapshot     String
+  variantNameSnapshot     String
+  priceMinorSnapshot      Int
+  durationMinutesSnapshot Int
+  bufferMinutesSnapshot   Int            @default(0)
+  appointment             Appointment    @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+  serviceVariant          ServiceVariant @relation(fields: [serviceVariantId], references: [id], onDelete: Restrict)
+
+  @@unique([appointmentId, position])
+  @@index([serviceVariantId])
+}
+
+// Never store card numbers, CVC or a provider's secret credentials.
+model Payment {
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId       String        @db.Uuid
+  provider            String        @db.VarChar(64)
+  mode                PaymentMode
+  providerPaymentId   String?       @db.VarChar(255)
+  idempotencyKey      String        @unique @db.VarChar(128)
+  status              PaymentStatus @default(PENDING)
+  amountMinor         Int
+  refundedAmountMinor Int           @default(0)
+  currency            String        @db.Char(3)
+  needsAttention      Boolean       @default(false)
+  attentionReason     String?
+  failureCode         String?
+  expiresAt           DateTime?     @db.Timestamptz(3)
+  paidAt              DateTime?     @db.Timestamptz(3)
+  refundedAt          DateTime?     @db.Timestamptz(3)
+  createdAt           DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime      @updatedAt @db.Timestamptz(3)
+  appointment         Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+  events              PaymentEvent[]
+  requests            PaymentRequest[]
+
+  @@unique([provider, mode, providerPaymentId])
+  @@index([appointmentId, status])
+  @@index([status, createdAt])
+  @@index([needsAttention, createdAt])
+}
+
+// Every browser request key keeps its original payment, including aliases to
+// an already active attempt. A retry can never silently start another charge.
+model PaymentRequest {
+  idempotencyKey String   @id @db.Uuid
+  paymentId      String   @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+}
+
+// Verified provider notifications only. Store a fingerprint, never raw secrets.
+model PaymentEvent {
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentId          String        @db.Uuid
+  provider           String        @db.VarChar(64)
+  mode               PaymentMode
+  eventId            String        @db.VarChar(128)
+  payloadFingerprint String        @db.VarChar(64)
+  status             PaymentStatus
+  issuedAt           DateTime      @db.Timestamptz(3)
+  receivedAt         DateTime      @default(now()) @db.Timestamptz(3)
+  payment            Payment       @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, mode, eventId])
+  @@index([paymentId, receivedAt])
+}
+
+model AdminUser {
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  emailNormalized     String        @unique
+  name                String
+  passwordHash        String
+  role                AdminRole     @default(ADMIN)
+  isActive            Boolean       @default(true)
+  sessionVersion      Int           @default(0)
+  lastLoginAt         DateTime?     @db.Timestamptz(3)
+  archivedAt          DateTime?     @db.Timestamptz(3)
+  createdAt           DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime      @updatedAt @db.Timestamptz(3)
+  createdAppointments Appointment[]
+  auditLogs           AuditLog[]
+  sessions            AdminSession[]
+  mutations           AdminMutation[]
+}
+
+// Only a hash of the opaque browser token is persisted. Current account status
+// and sessionVersion are checked again on every request and inside mutations.
+model AdminSession {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash      String    @unique @db.VarChar(64)
+  adminId        String    @db.Uuid
+  sessionVersion Int
+  expiresAt      DateTime  @db.Timestamptz(3)
+  revokedAt      DateTime? @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  admin          AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, expiresAt])
+  @@index([expiresAt])
+}
+
+// Hashed normalized identity avoids storing attempted addresses in throttling.
+model AdminLoginThrottle {
+  identityHash  String   @id @db.VarChar(64)
+  attempts      Int      @default(0)
+  windowStartsAt DateTime @db.Timestamptz(3)
+  updatedAt     DateTime @default(now()) @db.Timestamptz(3)
+}
+
+// Replay responses are private admin data and are never exposed publicly.
+model AdminMutation {
+  id                 String    @id @db.Uuid
+  actorId            String    @db.Uuid
+  action             String    @db.VarChar(64)
+  payloadFingerprint String    @db.VarChar(64)
+  result             Json
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  actor              AdminUser @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([actorId, createdAt])
+}
+
+model AuditLog {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId    String?    @db.Uuid
+  action     String     @db.VarChar(64)
+  entityType String     @db.VarChar(64)
+  entityId   String     @db.VarChar(128)
+  changes    Json?
+  requestId  String?    @db.VarChar(128)
+  createdAt  DateTime   @default(now()) @db.Timestamptz(3)
+  actor      AdminUser? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+}
